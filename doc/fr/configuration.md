@@ -1,4 +1,4 @@
-<!-- phil-dev source-sha256=0477daa72e760488b254daa607d3d34bfdb81bdbfa6e1c5cd493debf173ed69c -->
+<!-- phil-dev source-sha256=c5c2e5cf7bddd421f2135976560cec19d4b8c45589758b2b1784517a06769092 -->
 # Configuration
 
 ```yaml
@@ -7,7 +7,7 @@ phil_rate_limit:
     headers: draft                     # draft, legacy, both or none
     error_template: '@PhilRateLimit/too_many_requests.html.twig'
     cache_pool: cache.app              # where the limiters keep their state
-    lock_factory: null                 # a lock factory, for exact counts under concurrency
+    lock_factory: auto                 # lock.factory when it is defined, a service id, or null for none
     single_server: false               # accepts a store local to the server in prod
     network:                           # needs phil/ip-anonymizer
         enabled: false
@@ -20,10 +20,10 @@ phil_rate_limit:
             interval: '1 minute'
             key: ip                    # ip, user, user_or_ip, ip_route, or a KeyResolver service id
             amount: 1
-        login: { policy: fixed_window, limit: 5, interval: '15 minutes', key: ip_route, lock_factory: lock.factory }
+        reset: { policy: fixed_window, limit: 5, interval: '15 minutes', key: ip_route, lock_factory: lock.factory }
         monthly: { policy: fixed_window, limit: 10000, interval: '1 month', anchor_at: '2026-01-01', key: user }
         contact: { policy: token_bucket, limit: 3, rate: { interval: '10 minutes', amount: 1 } }
-        strict: { policy: compound, limiters: [api, login] }
+        strict: { policy: compound, limiters: [api, reset] }
         shared: { service: limiter.anonymous_api }
         sessions: { policy: sliding_window, limit: 30, interval: '1 minute', storage: app.rate_limit_storage }
         search: { policy: sliding_window, limit: 30, interval: '1 minute', observe: true }
@@ -40,12 +40,31 @@ phil_rate_limit:
 | `headers` | `draft` | `draft` écrit `RateLimit-Policy` et `RateLimit` ; `legacy` écrit `RateLimit-Limit`, `RateLimit-Remaining` et `RateLimit-Reset` ; `both` ; `none` garde `Retry-After` seul. |
 | `error_template` | `@PhilRateLimit/too_many_requests.html.twig` | La page d'un refus donné en HTML. |
 | `cache_pool` | `cache.app` | Le pool de cache de chaque limiteur qui ne nomme ni pool ni stockage. |
-| `lock_factory` | `null` | La fabrique de verrous de chaque limiteur qui n'en nomme aucune. |
+| `lock_factory` | `auto` | La fabrique de verrous de chaque limiteur qui n'en nomme aucune : `auto` prend `lock.factory` quand il est défini, comme FrameworkBundle ; `null` réserve sans verrou. |
 | `single_server` | `false` | Accepte un pool ou un stockage propre au serveur dans l'environnement `prod`. |
 | `network.enabled` | `false` | Les clés `ip` du réseau du client plutôt que de son hôte. |
 | `network.ipv4_prefix`, `network.ipv6_prefix` | `32`, `64` | Les préfixes gardés. |
 | `limiters` | `{}` | Les limiteurs, par nom : de 1 à 64 lettres, chiffres, `_`, `.` et `-`. |
 | `forms` | `{}` | Les règles des formulaires par nom de formulaire. |
+
+## Formulaires de connexion
+
+Un formulaire de connexion est limité par le `login_throttling` de Symfony, pas par ce bundle : il compte chaque
+tentative avant la vérification du mot de passe, si bien qu'un mauvais mot de passe et un bon pèsent autant, et il
+regroupe les adresses IPv6 par /64, si bien qu'un hôte ne peut pas répartir ses tentatives sur son propre réseau.
+
+```yaml
+# config/packages/security.yaml
+security:
+    firewalls:
+        main:
+            login_throttling:
+                max_attempts: 5
+                interval: '15 minutes'
+```
+
+Le bundle limite tout le reste : les API, les autres formulaires (réinitialisation du mot de passe, contact,
+inscription), et les contrôleurs et les routes déclarés avec `#[RateLimit]` ou `_rate_limit`.
 
 ## Un limiteur
 
